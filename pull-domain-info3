@@ -78,7 +78,7 @@ for i in `egrep -H OWNER= /var/cpanel/users/* | tr '/:=' ' ' | awk '{print$4":"$
 
                 ## Dimitar - START
                 # Change the way we are pulling domain name or subdomain information
-                # Previous script was checking for main domains and addons only, we now pull Aliases and subdomains.
+                # Previous script was checking for main domains and addons only, we now pull Aliases.
                 # This is required, as clients can use different setup for their projects and we get false positives.
                 # addon domains
                 addon_domains=$(awk '/addon_domains/{f=1;next}/main_domain/{f=0}f' /var/cpanel/userdata/$user/main | grep -v 'addon_domains:' | awk -F: '{print $1}' | tr -d ' ')
