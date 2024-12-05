@@ -76,9 +76,10 @@ for i in `egrep -H OWNER= /var/cpanel/users/* | tr '/:=' ' ' | awk '{print$4":"$
                 domain=$(grep main_domain /var/cpanel/userdata/$user/main | awk '{print $2}')
                 echo "$host,$owner,$user,$contact,$status,parent,$domain,$domain,$assigned_ip"
 
-## Dimitar - change the way we are pulling domain name or subdomain information - START
-# Previous script was checking for main domains and addons only, we now pull Aliases and subdomains.
-# This is required, as clients can use different setup for their projects and we get false positives.
+		## Dimitar - START
+		# Change the way we are pulling domain name or subdomain information
+		# Previous script was checking for main domains and addons only, we now pull Aliases and subdomains.
+		# This is required, as clients can use different setup for their projects and we get false positives.
                 # Addon domains
                 addon_domains=$(awk '/addon_domains:/ {getline; if ($0 ~ /^[[:space:]]*}$/) next} /^[[:space:]]+-/ {print $2}' /var/cpanel/userdata/$user/main)
                 for addon in $addon_domains; do
@@ -106,7 +107,7 @@ for i in `egrep -H OWNER= /var/cpanel/users/* | tr '/:=' ' ' | awk '{print$4":"$
                     echo "$host,$owner,$user,$contact,$status,subdomain,$domain,$subdomain,$assigned_ip"
                   fi
                 done
-  # Dimitar - END
+		  # Dimitar - END
 
                 unset suspended unset status
         fi
@@ -148,7 +149,7 @@ for i in `cat $tmpf.userstubs`; do
 			hosted="zombie"
 		else
 			resolv=`echo "$resolvers" | tr ' ' '\n' | awk 'BEGIN{srand();} {printf "%06d %s\n", rand()*1000000, $0;}' | head -n1 | awk '{print$2}'`
-
+## Dimitar - START
 # Comment out the previous NS resolution logic - START
 #      ns=`dig +time=$timeout +tries=$tries $domain @$resolv NS | egrep '.*IN.*NS.*' | awk '{print$5}' | egrep -v '^$' | sed 's/.$//' | head -n1`
 #      errcheck=`echo $ns | egrep 'connection timed out'`
@@ -172,9 +173,11 @@ for i in `cat $tmpf.userstubs`; do
 #        ns_ip="nxdom"
 #      fi
 # Comment out the previous NS resolution logic - END
+## Dimitar - END
 
-## Dimitar - Add the new logic for resolving domains - START
-## If resolution fails, check if this is a subdomain and resolve parent domain.
+## Dimitar - START
+# Add the new logic for resolving domains
+# If resolution fails, check if this is a subdomain and resolve parent domain.
 
 # Resolve NS for the domain or its parent domains
 ns=$(resolve_name_servers "$domain" "$resolvers" "$timeout" "$tries")
