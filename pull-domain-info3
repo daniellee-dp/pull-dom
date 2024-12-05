@@ -76,38 +76,22 @@ for i in `egrep -H OWNER= /var/cpanel/users/* | tr '/:=' ' ' | awk '{print$4":"$
                 domain=$(grep main_domain /var/cpanel/userdata/$user/main | awk '{print $2}')
                 echo "$host,$owner,$user,$contact,$status,parent,$domain,$domain,$assigned_ip"
 
-		## Dimitar - START
-		# Change the way we are pulling domain name or subdomain information
-		# Previous script was checking for main domains and addons only, we now pull Aliases and subdomains.
-		# This is required, as clients can use different setup for their projects and we get false positives.
-                # Addon domains
-                addon_domains=$(awk '/addon_domains:/ {getline; if ($0 ~ /^[[:space:]]*}$/) next} /^[[:space:]]+-/ {print $2}' /var/cpanel/userdata/$user/main)
+                ## Dimitar - START
+                # Change the way we are pulling domain name or subdomain information
+                # Previous script was checking for main domains and addons only, we now pull Aliases and subdomains.
+                # This is required, as clients can use different setup for their projects and we get false positives.
+                # addon domains
+                addon_domains=$(awk '/addon_domains/{f=1;next}/main_domain/{f=0}f' /var/cpanel/userdata/$user/main | grep -v 'addon_domains:' | awk -F: '{print $1}' | tr -d ' ')
                 for addon in $addon_domains; do
-                  # Ensure it's not in parked domains
-                  if ! grep -q "^  - $addon" /var/cpanel/userdata/$user/main; then
-                    if [[ $addon =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-                      echo "$host,$owner,$user,$contact,$status,addon,$domain,$addon,$assigned_ip"
-                    fi
-                  fi
+                    echo "$host,$owner,$user,$contact,$status,addon,$domain,$addon,$assigned_ip"
                 done
 
-                # Parked domains (aliases)
-                parked_domains=$(awk '/parked_domains:/,/sub_domains:/' /var/cpanel/userdata/$user/main | grep '^  -' | awk '{print $2}')
+                # parked domains
+                parked_domains=$(awk '/parked_domains/{f=1;next}/sub_domains/{f=0}f' /var/cpanel/userdata/$user/main | grep '^  -' | awk '{print $2}')
                 for alias in $parked_domains; do
-                  if [[ $alias =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
                     echo "$host,$owner,$user,$contact,$status,alias,$domain,$alias,$assigned_ip"
-                  fi
                 done
-
-                # Subdomains
-                subdomains=$(awk '/sub_domains:/,/^$/' /var/cpanel/userdata/$user/main | grep '^  -' | awk '{print $2}')
-                for subdomain in $subdomains; do
-                # Validate it's a unique subdomain
-                  if [[ $subdomain =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-                    echo "$host,$owner,$user,$contact,$status,subdomain,$domain,$subdomain,$assigned_ip"
-                  fi
-                done
-		  # Dimitar - END
+                # Dimitar - END
 
                 unset suspended unset status
         fi
