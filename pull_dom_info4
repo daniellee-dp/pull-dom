@@ -1,0 +1,209 @@
+#!/bin/bash
+
+local_test="ns"
+## egrep regex string of owned IP space
+local_ips=""
+## name server domains owned by brand, considered local
+## for ns1/ns2.domain.com, enter "domain.com"
+## e.g local_ns="domain.com|whitelabelbrand.com|somens.com"
+local_ns="fcomet.com|myfcloud.com|myfcloudin.com|myfcloudto.com|myfcloudau.com|myfcloudtx.com|myfcloudfr.com|myfcloudat.com|myfcloudnw.com|myfclouduk.com|myfcloudsg.com|myfcloudde.com|myfcloudjp.com|myfcloudch.com|myfcloudla.com|myfcloudmi.com|myfcloudwa.com|myfclouddc.com|myfcloudoc.com|myfcloudtn.com|myfcloudid.com|myfcloudse.com|myfcloudnl.com|myfcloudit.com|myfcloudps.com|myfcloudbr.com|mysafedns.com"
+if [ "$1" ]; then
+        local_ns="$1"
+fi
+
+## probably don't need to edit below this point
+timeout=1
+tries=1
+resolvers="74.82.42.42 209.244.0.4 4.2.2.2 8.8.8.8 8.8.4.4 209.244.0.3 209.244.0.4"
+host=`hostname`
+tmpf="/tmp/.wk$$"
+
+## Dimitar / START
+# Function to extract parent domain
+get_parent_domain() {
+    local subdomain="$1"
+    echo "$subdomain" | awk -F. '{OFS="."; for(i=2; i<=NF; i++) printf $i (i==NF ? ORS : OFS)}'
+}
+
+# Enhanced name server resolution logic
+resolve_name_servers() {
+    local domain="$1"
+    local resolvers="$2"
+    local timeout="$3"
+    local tries="$4"
+
+    local ns=""
+    local errcheck=""
+    local resolv=`echo "$resolvers" | tr ' ' '\n' | awk 'BEGIN{srand();} {printf "%06d %s\n", rand()*1000000, $0;}' | head -n1 | awk '{print$2}'`
+
+    # Attempt to resolve NS records for the domain
+    ns=$(dig +time=$timeout +tries=$tries $domain @$resolv NS | awk '/IN[[:space:]]+NS[[:space:]]/ {print $5}' | sed 's/\.$//' | head -n1)
+    errcheck=$(echo "$ns" | egrep 'connection timed out')
+
+    # If resolution fails, try the parent domain
+    while [ -z "$ns" ] && [ "$domain" != "$(get_parent_domain "$domain")" ]; do
+        domain=$(get_parent_domain "$domain")
+        ns=$(dig +time=$timeout +tries=$tries $domain @$resolv NS | awk '/IN[[:space:]]+NS[[:space:]]/ {print $5}' | sed 's/\.$//' | head -n1)
+        errcheck=$(echo "$ns" | egrep 'connection timed out')
+    done
+
+    # Fallback for no results
+    if [ -z "$ns" ] || [ "$errcheck" ]; then
+        ns="nxdom"
+    fi
+
+    echo "$ns"
+}
+## Dimitar / END
+
+for i in `egrep -H OWNER= /var/cpanel/users/* | tr '/:=' ' ' | awk '{print$4":"$6}'`; do
+        user=`echo $i | cut -d':' -f1`
+        owner=`echo $i | cut -d':' -f2`
+        if [ -f "/var/cpanel/users/$user" ] && [ -d "/var/cpanel/userdata/$user" ]; then
+                suspended=`egrep SUSPENDED=1 /var/cpanel/users/$user`
+                if [ -z "$suspended" ]; then
+                        status=1
+                else
+                        status=0
+                fi
+                assigned_ip=`egrep IP= /var/cpanel/users/$user | cut -d'=' -f2`
+                plan=`egrep PLAN= /var/cpanel/users/$user | cut -d'=' -f2`
+                contact=`egrep CONTACTEMAIL= /var/cpanel/users/$user | cut -d'=' -f2`
+                if [ -z "$contact" ]; then
+                        contact=unset
+                fi
+                # Main domain
+                domain=$(grep main_domain /var/cpanel/userdata/$user/main | awk '{print $2}')
+                echo "$host,$owner,$user,$contact,$status,parent,$domain,$domain,$assigned_ip"
+
+                ## Dimitar - START
+                # Change the way we are pulling domain name or subdomain information
+                # Previous script was checking for main domains and addons only, we now pull Aliases and subdomains.
+                # This is required, as clients can use different setup for their projects and we get false positives.
+                # addon domains
+                addon_domains=$(awk '/addon_domains/{f=1;next}/main_domain/{f=0}f' /var/cpanel/userdata/$user/main | grep -v 'addon_domains:' | awk -F: '{print $1}' | tr -d ' ')
+                for addon in $addon_domains; do
+                    echo "$host,$owner,$user,$contact,$status,addon,$domain,$addon,$assigned_ip"
+                done
+
+                # parked domains
+                parked_domains=$(awk '/parked_domains/{f=1;next}/sub_domains/{f=0}f' /var/cpanel/userdata/$user/main | grep '^  -' | awk '{print $2}')
+                for alias in $parked_domains; do
+                    echo "$host,$owner,$user,$contact,$status,alias,$domain,$alias,$assigned_ip"
+                done
+                # Dimitar - END
+
+                unset suspended unset status
+        fi
+done > $tmpf.userstubs
+
+for i in `cat $tmpf.userstubs`; do
+        host=`echo $i | cut -d',' -f1`
+        owner=`echo $i | cut -d',' -f2`
+        user=`echo $i | cut -d',' -f3`
+        contact=`echo $i | cut -d',' -f4`
+        status=`echo $i | cut -d',' -f5`
+        type=`echo $i | cut -d',' -f6`
+        pdomain=`echo $i | cut -d',' -f7`
+        domain=`echo $i | cut -d',' -f8`
+        assigned_ip=`echo $i | cut -d',' -f9`
+        prefix="$i"
+        if [ "$domain" ]; then
+                resolv=`echo "$resolvers" | tr ' ' '\n' | awk 'BEGIN{srand();} {printf "%06d %s\n", rand()*1000000, $0;}' | head -n1 | awk '{print$2}'`
+                domain_ip=`dig +time=$timeout +tries=$tries +short $domain @$resolv | head -n1`
+                errcheck=`echo $domain_ip | egrep 'connection timed out'`
+                if [ "$errcheck" ]; then
+                        resolv=`echo "$resolvers" | tr ' ' '\n' | grep -v "$resolv" | awk 'BEGIN{srand();} {printf "%06d %s\n", rand()*1000000, $0;}' | head -n1 | awk '{print$2}'`
+                        domain_ip=`dig +time=$timeout +tries=$tries +short $domain @$resolv | head -n1`
+                        unset errcheck
+                        errcheck=`echo $domain_ip | egrep 'connection timed out'`
+                fi
+                if [ -z "$domain_ip" ] || [ "$errcheck" ]; then
+                        domain_ip="nxdom"
+                fi
+                if [ "$domain_ip" == "$assigned_ip" ]; then
+                        hosted="lhost"
+                else
+                        hosted="rhost"
+                fi
+                if [ "$domain_ip" == "nxdom" ]; then
+                        ns="nxdom"
+                        ns_ip="nxdom"
+                        ns_iplr="nxdom"
+                        hosted="zombie"
+                else
+                        resolv=`echo "$resolvers" | tr ' ' '\n' | awk 'BEGIN{srand();} {printf "%06d %s\n", rand()*1000000, $0;}' | head -n1 | awk '{print$2}'`
+## Dimitar - START
+# Comment out the previous NS resolution logic - START
+#      ns=`dig +time=$timeout +tries=$tries $domain @$resolv NS | egrep '.*IN.*NS.*' | awk '{print$5}' | egrep -v '^$' | sed 's/.$//' | head -n1`
+#      errcheck=`echo $ns | egrep 'connection timed out'`
+#      if [ "$errcheck" ]; then
+#        resolv=`echo "$resolvers" | tr ' ' '\n' | grep -v "$resolv" | awk 'BEGIN{srand();} {printf "%06d %s\n", rand()*1000000, $0;}' | head -n1 | awk '{print$2}'`
+#        ns=`dig +time=$timeout +tries=$tries $domain @$resolv NS | egrep '.*IN.*NS.*' | awk '{print$5}' | egrep -v '^$' | sed 's/.$//' | head -n1`
+#        unset errcheck
+#        errcheck=`echo $ns | egrep 'connection timed out'`
+#      fi
+#      if [ -z "$errcheck" ]; then
+#        ns_ip=`dig +time=$timeout +tries=$tries +short $ns @$resolv | head -n1`
+#        errcheck=`echo $ns_ip | egrep 'connection timed out'`
+#        if [ "$errcheck" ]; then
+#          resolv=`echo "$resolvers" | tr ' ' '\n' | grep -v "$resolv" | awk 'BEGIN{srand();} {printf "%06d %s\n", rand()*1000000, $0;}' | head -n1 | awk '{print$2}'`
+#          ns_ip=`dig +time=$timeout +tries=$tries +short $ns @$resolv | head -n1`
+#          unset errcheck
+#          errcheck=`echo $ns_ip | egrep 'connection timed out'`
+#        fi
+#      else
+#        ns="nxdom"
+#        ns_ip="nxdom"
+#      fi
+# Comment out the previous NS resolution logic - END
+## Dimitar - END
+
+## Dimitar - START
+# Add the new logic for resolving domains
+# If resolution fails, check if this is a subdomain and resolve parent domain.
+
+# Resolve NS for the domain or its parent domains
+ns=$(resolve_name_servers "$domain" "$resolvers" "$timeout" "$tries")
+
+# Check if the NS resolution was successful
+if [ "$ns" == "nxdom" ]; then
+    ns_ip="nxdom"
+else
+    ns_ip=`dig +time=$timeout +tries=$tries +short $ns @$resolv | head -n1`
+    errcheck=`echo $ns_ip | egrep 'connection timed out'`
+    if [ "$errcheck" ]; then
+        resolv=`echo "$resolvers" | tr ' ' '\n' | grep -v "$resolv" | awk 'BEGIN{srand();} {printf "%06d %s\n", rand()*1000000, $0;}' | head -n1 | awk '{print$2}'`
+        ns_ip=`dig +time=$timeout +tries=$tries +short $ns @$resolv | head -n1`
+    fi
+    if [ -z "$ns_ip" ]; then
+        ns_ip="nxdom"
+    fi
+fi
+## Dimitar - END
+
+                        if [ "$ns_ip" == "nxdom" ] || [ "$ns" == "nxdom" ] || [ "$domain_ip" ==  "nxdom" ]; then
+                                ns_iplr=nxdom
+                        else
+                                if [ "$local_test" == "ns" ]; then
+                                        ns_iplr=`echo $ns | egrep "$local_ns"`
+                                        if [ "$ns_iplr" ]; then
+                                                ns_iplr=local
+                                        else
+                                                ns_iplr=remote
+                                        fi
+                                else
+                                        ns_iplr=`echo $ns_ip | egrep "$local_ips"`
+                                        if [ "$ns_iplr" ]; then
+                                                ns_iplr=local
+                                        else
+                                                ns_iplr=remote
+                                        fi
+                                fi
+                        fi
+                fi
+                echo "$prefix,$domain_ip,$hosted,$ns,$ns_ip,$ns_iplr"
+        fi
+done
+
+rm -f $tmpf.*
